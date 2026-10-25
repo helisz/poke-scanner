@@ -9,3 +9,10 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 *.log
+
+# TypeScript incremental build state. These are machine-specific: committing them
+# lets a stale local build make `vue-tsc -b` skip a real typecheck on CI.
+*.tsbuildinfo
+
+# Vercel project link, created by `vercel link`. Contains the project/org ids.
+.vercel
