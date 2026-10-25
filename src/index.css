@@ -1,0 +1,170 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.75rem;
+
+  --background: oklch(0.16 0.015 265);
+  --foreground: oklch(0.96 0.005 265);
+  --card: oklch(0.2 0.018 265);
+  --card-foreground: oklch(0.96 0.005 265);
+  --popover: oklch(0.21 0.018 265);
+  --popover-foreground: oklch(0.96 0.005 265);
+  --primary: oklch(0.62 0.21 22);
+  --primary-foreground: oklch(0.99 0.005 22);
+  --secondary: oklch(0.28 0.02 265);
+  --secondary-foreground: oklch(0.96 0.005 265);
+  --muted: oklch(0.26 0.018 265);
+  --muted-foreground: oklch(0.68 0.02 265);
+  --accent: oklch(0.82 0.16 85);
+  --accent-foreground: oklch(0.2 0.03 85);
+  --destructive: oklch(0.6 0.22 15);
+  --destructive-foreground: oklch(0.99 0.005 15);
+  --border: oklch(0.3 0.02 265);
+  --input: oklch(0.32 0.02 265);
+  --ring: oklch(0.62 0.21 22);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Noto Sans SC', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: oklch(0.62 0.21 22 / 0.35);
+  }
+}
+
+/* --- scanner atmosphere ------------------------------------------------ */
+
+.app-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 12% -10%, oklch(0.62 0.21 22 / 0.18), transparent 60%),
+    radial-gradient(45rem 35rem at 92% 8%, oklch(0.72 0.16 240 / 0.14), transparent 62%),
+    radial-gradient(40rem 30rem at 50% 110%, oklch(0.82 0.16 85 / 0.08), transparent 60%);
+  z-index: 0;
+}
+
+.app-bg::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(to right, oklch(1 0 0 / 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, oklch(1 0 0 / 0.035) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(70% 60% at 50% 40%, black, transparent 85%);
+  z-index: 0;
+}
+
+.scan-sweep {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.scan-sweep::after {
+  content: '';
+  position: absolute;
+  left: -20%;
+  right: -20%;
+  height: 28%;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    oklch(0.82 0.16 85 / 0.28),
+    oklch(0.95 0.1 85 / 0.55),
+    oklch(0.82 0.16 85 / 0.28),
+    transparent
+  );
+  filter: blur(2px);
+  animation: sweep 1.9s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes sweep {
+  0% {
+    top: -30%;
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    top: 105%;
+    opacity: 0;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-fade-up {
+  animation: fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
