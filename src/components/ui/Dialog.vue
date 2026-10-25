@@ -50,7 +50,11 @@ onBeforeUnmount(() => {
       leave-active-class="transition duration-150 ease-in"
       leave-to-class="opacity-0"
     >
-      <div v-if="props.open" class="fixed inset-0 z-90 flex items-center justify-center p-4">
+      <div
+        v-if="props.open"
+        class="fixed inset-0 z-90 flex items-end justify-center p-0 sm:items-center sm:p-4"
+        style="padding-bottom: env(safe-area-inset-bottom)"
+      >
         <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" @click="close" />
 
         <Transition
@@ -63,13 +67,15 @@ onBeforeUnmount(() => {
             aria-modal="true"
             :class="
               cn(
-                'relative z-10 w-full max-w-lg overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl',
+                // Mobile: bottom sheet that can never exceed the visible height.
+                // Desktop: centred card as before.
+                'relative z-10 flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-border bg-popover shadow-2xl sm:max-h-[85dvh] sm:rounded-2xl',
                 props.class,
               )
             "
           >
-            <div class="flex items-start justify-between gap-4 border-b border-border/70 px-6 py-4">
-              <div class="space-y-1">
+            <div class="flex shrink-0 items-start justify-between gap-4 border-b border-border/70 px-5 py-4 sm:px-6">
+              <div class="min-w-0 space-y-1">
                 <h2 v-if="props.title" class="text-base font-semibold tracking-tight">{{ props.title }}</h2>
                 <p v-if="props.description" class="text-xs text-muted-foreground">{{ props.description }}</p>
               </div>
@@ -83,11 +89,11 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div class="max-h-[70vh] overflow-y-auto px-6 py-5">
+            <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6">
               <slot />
             </div>
 
-            <div v-if="$slots.footer" class="border-t border-border/70 px-6 py-4">
+            <div v-if="$slots.footer" class="shrink-0 border-t border-border/70 px-5 py-4 sm:px-6">
               <slot name="footer" />
             </div>
           </div>

@@ -7,7 +7,10 @@ const { toasts, dismiss } = useToast()
 </script>
 
 <template>
-  <div class="pointer-events-none fixed inset-x-0 bottom-0 z-100 flex flex-col items-center gap-2 p-4 sm:items-end sm:p-6">
+  <div
+    class="pointer-events-none fixed inset-x-0 bottom-0 z-100 flex flex-col items-center gap-2 p-3 sm:items-end sm:p-6"
+    style="padding-bottom: max(0.75rem, env(safe-area-inset-bottom))"
+  >
     <TransitionGroup
       enter-active-class="transition duration-300 ease-out"
       enter-from-class="translate-y-3 opacity-0"

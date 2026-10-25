@@ -137,34 +137,160 @@ try {
   // ---- select -> card ------------------------------------------------------
   await page.locator('button:has-text("相似度")').first().click()
   await page.waitForSelector('text=图鉴卡片', { timeout: 15000 })
-  await page.waitForTimeout(1200) // let the canvas finish rendering
+  await page.waitForTimeout(1500) // let the card finish rendering
 
-  const canvasBox = await page.locator('canvas').boundingBox()
-  check('card canvas is present and sized', !!canvasBox && canvasBox.width > 100, JSON.stringify(canvasBox))
+  // The card is exposed as an <img> with a data: source so mobile gets the
+  // native long-press "save image" action. Assert on the image, not a canvas.
+  const cardImg = page.locator('img[alt$="图鉴卡片"]').first()
+  const cardBox = await cardImg.boundingBox()
+  check('card image is present and sized', !!cardBox && cardBox.width > 100, JSON.stringify(cardBox))
 
-  const canvasBlank = await page.evaluate(() => {
-    const c = document.querySelector('canvas')
-    if (!c) return 'no canvas'
-    const ctx = c.getContext('2d')
-    const data = ctx.getImageData(0, 0, c.width, c.height).data
-    // sample pixels: a blank/black card would have almost no variance
-    let min = 255
-    let max = 0
-    for (let i = 0; i < data.length; i += 4 * 977) {
-      const lum = (data[i] + data[i + 1] + data[i + 2]) / 3
-      if (lum < min) min = lum
-      if (lum > max) max = lum
-    }
-    return { min, max, w: c.width, h: c.height }
+  const cardInfo = await page.evaluate(() => {
+    const img = document.querySelector('img[alt$="图鉴卡片"]')
+    if (!img) return 'no card image'
+    if (!img.src.startsWith('data:image/png')) return { src: img.src.slice(0, 40) }
+    return { w: img.naturalWidth, h: img.naturalHeight, bytes: img.src.length }
   })
   check(
-    'card canvas has real pixel variance',
-    typeof canvasBlank === 'object' && canvasBlank.max - canvasBlank.min > 40 && canvasBlank.w === 1080 && canvasBlank.h === 1350,
-    JSON.stringify(canvasBlank),
+    'card image is a 1080x1350 PNG data URL',
+    typeof cardInfo === 'object' && cardInfo.w === 1080 && cardInfo.h === 1350,
+    JSON.stringify(cardInfo),
   )
 
   await page.getByRole('heading', { name: '图鉴卡片' }).scrollIntoViewIfNeeded()
   await page.screenshot({ path: path.join(OUT, '02-card.png'), fullPage: true })
+
+  // ---- full-screen viewer --------------------------------------------------
+  // Two entry points exist (an icon overlay labelled 全屏查看 and a text button
+  // labelled 全屏), so match the text button exactly.
+  await page.getByRole('button', { name: '全屏', exact: true }).click()
+  await page.getByRole('dialog', { name: '图鉴卡片全屏预览' }).waitFor({ timeout: 5000 })
+  check('full-screen viewer opens', (await page.getByRole('dialog', { name: '图鉴卡片全屏预览' }).count()) === 1)
+  await page.getByRole('dialog', { name: '图鉴卡片全屏预览' }).getByRole('button', { name: '关闭' }).click()
+  await page.getByRole('dialog', { name: '图鉴卡片全屏预览' }).waitFor({ state: 'detached', timeout: 5000 })
+  check('full-screen viewer closes', (await page.getByRole('dialog', { name: '图鉴卡片全屏预览' }).count()) === 0)
+
+  // ---- mobile viewport: no horizontal overflow ----------------------------
+  // This is the regression guard for "step 2 is wider than the phone screen".
+  for (const vp of [
+    { label: 'iPhone SE', width: 320, height: 568 },
+    { label: 'iPhone 15', width: 393, height: 852 },
+    { label: 'Pixel 7', width: 412, height: 915 },
+  ]) {
+    await page.setViewportSize({ width: vp.width, height: vp.height })
+    await page.waitForTimeout(400)
+    const overflow = await page.evaluate(() => {
+      const de = document.documentElement
+      const widest = [...document.querySelectorAll('body *')]
+        .map((el) => ({ w: el.getBoundingClientRect().right, tag: el.tagName }))
+        .reduce((a, b) => (b.w > a.w ? b : a), { w: 0, tag: '' })
+      return {
+        scrollWidth: de.scrollWidth,
+        clientWidth: de.clientWidth,
+        widestRight: Math.round(widest.w),
+        widestTag: widest.tag,
+      }
+    })
+    check(
+      `no horizontal overflow at ${vp.label} (${vp.width}px)`,
+      overflow.scrollWidth <= overflow.clientWidth + 1,
+      JSON.stringify(overflow),
+    )
+
+    // The card must remain long-pressable: iOS needs a real <img> with a data:
+    // source and no -webkit-touch-callout:none for the native save sheet.
+    const longPressReady = await page.evaluate(() => {
+      const img = document.querySelector('img[alt$="图鉴卡片"]')
+      if (!img) return 'no card image'
+      const cs = getComputedStyle(img)
+      return {
+        isImg: img.tagName === 'IMG',
+        dataUrl: img.src.startsWith('data:image/png'),
+        touchCallout: cs.webkitTouchCallout || 'default',
+        pointerEvents: cs.pointerEvents,
+      }
+    })
+    check(
+      `card is long-press saveable at ${vp.width}px`,
+      typeof longPressReady === 'object' &&
+        longPressReady.isImg &&
+        longPressReady.dataUrl &&
+        longPressReady.touchCallout !== 'none' &&
+        longPressReady.pointerEvents !== 'none',
+      JSON.stringify(longPressReady),
+    )
+
+    // The long-press instruction must actually reach phone users.
+    const hintVisible = await page.getByText(/长按上方卡片图片/).first().isVisible().catch(() => false)
+    check(`long-press hint is visible at ${vp.width}px`, hintVisible)
+
+    await page.screenshot({
+      path: path.join(OUT, `04-mobile-${vp.width}.png`),
+      fullPage: true,
+    })
+  }
+
+  // ---- mobile settings dialog renders as a bottom sheet --------------------
+  await page.setViewportSize({ width: 393, height: 852 })
+  await page.getByRole('button', { name: /设置/ }).click()
+  await page.getByRole('dialog').waitFor({ timeout: 5000 })
+  // the sheet enters with a translate-y transition; measuring mid-flight yields
+  // a false overflow, so wait for it to settle
+  await page.waitForTimeout(500)
+  const sheet = await page.evaluate(() => {
+    const d = document.querySelector('[role="dialog"]')
+    if (!d) return 'no dialog'
+    const r = d.getBoundingClientRect()
+    return {
+      top: Math.round(r.top),
+      bottom: Math.round(r.bottom),
+      height: Math.round(r.height),
+      vh: window.innerHeight,
+      width: Math.round(r.width),
+    }
+  })
+  check(
+    'mobile dialog fits the viewport without scrolling the page',
+    typeof sheet === 'object' && sheet.height <= sheet.vh && sheet.bottom <= sheet.vh + 1,
+    JSON.stringify(sheet),
+  )
+  await page.screenshot({ path: path.join(OUT, '05-mobile-settings.png') })
+  await page.getByRole('dialog').getByRole('button', { name: '取消' }).click()
+  await page.getByRole('dialog').waitFor({ state: 'detached', timeout: 5000 })
+
+  // ---- type pills are drawn into the card ----------------------------------
+  // Text inside a canvas cannot be queried, so probe the pixel block where the
+  // pill sits: it must be strongly saturated in the type colour (electric yellow).
+  const pill = await page.evaluate(async () => {
+    const img = document.querySelector('img[alt$="图鉴卡片"]')
+    if (!img) return 'no card image'
+    const blob = await (await fetch(img.src)).blob()
+    const bmp = await createImageBitmap(blob)
+    const c = document.createElement('canvas')
+    c.width = bmp.width
+    c.height = bmp.height
+    const ctx = c.getContext('2d')
+    ctx.drawImage(bmp, 0, 0)
+    // Pills are right-aligned on the name row: y = 700..750, x near the right edge.
+    const box = ctx.getImageData(880, 700, 116, 50).data
+    let saturated = 0
+    for (let i = 0; i < box.length; i += 4) {
+      const r = box[i]
+      const g = box[i + 1]
+      const b = box[i + 2]
+      // electric yellow: high red+green, low blue
+      if (r > 170 && g > 140 && b < 120) saturated++
+    }
+    return { saturated, total: box.length / 4 }
+  })
+  check(
+    'card renders type pills next to the name',
+    typeof pill === 'object' && pill.saturated > 200,
+    JSON.stringify(pill),
+  )
+
+  await page.setViewportSize({ width: 1440, height: 1200 })
+  await page.waitForTimeout(400)
 
   // ---- download ------------------------------------------------------------
   const downloadPromise = page.waitForEvent('download', { timeout: 20000 })

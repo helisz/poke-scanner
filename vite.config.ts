@@ -10,6 +10,23 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  // Bind to all interfaces so phones on the same Wi-Fi can reach the dev server.
+  // `localhost`-only binding is the default and is unreachable from other devices.
+  server: {
+    host: true,
+    port: 5173,
+    strictPort: true,
+    // Vite blocks unknown Host headers by default. LAN IPs are always allowed;
+    // add `.local` so mDNS names (`<hostname>.local`) work from a phone too,
+    // while keeping DNS-rebinding protection for arbitrary domains.
+    allowedHosts: ['.local'],
+  },
+  preview: {
+    host: true,
+    port: 4173,
+    strictPort: true,
+    allowedHosts: ['.local'],
+  },
   build: {
     target: 'es2022',
     rollupOptions: {

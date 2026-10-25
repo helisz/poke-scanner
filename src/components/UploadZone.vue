@@ -58,32 +58,34 @@ function onPaste(event: ClipboardEvent) {
     @keydown.enter.prevent="pick"
     @keydown.space.prevent="pick"
   >
-    <div class="flex flex-col items-center gap-6 px-8 py-16 text-center sm:py-24">
+    <div class="flex flex-col items-center gap-5 px-5 py-12 text-center sm:gap-6 sm:px-8 sm:py-24">
       <div class="relative">
         <div class="absolute inset-0 animate-ping rounded-2xl bg-primary/15" />
-        <div class="relative grid size-20 place-items-center rounded-2xl border border-border bg-secondary/70">
-          <ImagePlus class="size-9 text-primary" />
+        <div class="relative grid size-16 place-items-center rounded-2xl border border-border bg-secondary/70 sm:size-20">
+          <ImagePlus class="size-7 text-primary sm:size-9" />
         </div>
       </div>
 
       <div class="space-y-2">
-        <p class="text-xl font-semibold tracking-tight">拖入图片，或点击选择</p>
-        <p class="text-sm text-muted-foreground">
-          支持 JPG / PNG / WebP，也可以直接 <kbd class="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-xs">⌘V</kbd> 粘贴截图
+        <p class="text-lg font-semibold tracking-tight sm:text-xl">拖入图片，或点击选择</p>
+        <p class="text-[13px] text-muted-foreground sm:text-sm">
+          支持 JPG / PNG / WebP<span class="hidden sm:inline">，也可以直接 <kbd class="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-xs">⌘V</kbd> 粘贴截图</span>
         </p>
       </div>
 
-      <Button size="lg" variant="default" @click.stop="pick">
+      <Button size="lg" variant="default" class="w-full max-w-56" @click.stop="pick">
         <Upload class="size-4" />
         选择图片
       </Button>
 
-      <div class="flex items-center gap-2 text-xs text-muted-foreground/70">
-        <ScanLine class="size-3.5" />
+      <div class="flex items-center gap-2 text-center text-[11px] text-muted-foreground/70 sm:text-xs">
+        <ScanLine class="size-3.5 shrink-0" />
         图片在本地压缩后才会发送，最大 20MB
       </div>
     </div>
 
+    <!-- `capture` is intentionally omitted: on a phone we want the photo library
+         picker, not an immediate camera launch. -->
     <input ref="inputRef" type="file" accept="image/*" class="sr-only" @change="onChange" />
   </div>
 </template>

@@ -66,13 +66,29 @@
   html,
   body,
   #app {
-    height: 100%;
+    min-height: 100%;
   }
   body {
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
+    /* Stop iOS from reflowing text on orientation change, which is what makes
+       the layout appear to "jump" wider than the viewport after rotating. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  html {
+    /* Belt and braces against a single wide child making the page pannable.
+       `clip` (not `hidden`) keeps position: sticky working. */
+    overflow-x: clip;
+  }
+  img,
+  canvas,
+  video {
+    /* Flex/grid children default to min-content width, so an oversized image
+       silently widens its column and the whole page scrolls sideways. */
+    max-width: 100%;
   }
   ::selection {
     background: oklch(0.62 0.21 22 / 0.35);

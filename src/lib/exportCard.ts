@@ -152,27 +152,43 @@ function drawLens(ctx: CanvasRenderingContext2D, accent: string) {
   ctx.restore()
 }
 
+interface TypeBadgeOptions {
+  height?: number
+  font?: number
+  paddingX?: number
+  gap?: number
+  /** Draw a soft outline so a light type stays legible on a light backdrop. */
+  outline?: boolean
+}
+
+/** Draws one type pill right-aligned at `right`; returns the next free x. */
 function drawTypeBadge(
   ctx: CanvasRenderingContext2D,
   label: string,
   right: number,
   y: number,
+  options: TypeBadgeOptions = {},
 ): number {
-  ctx.font = `600 26px ${FONT_STACK}`
-  const paddingX = 22
+  const { height = 44, font = 26, paddingX = 22, gap = 12, outline = false } = options
+  ctx.font = `600 ${font}px ${FONT_STACK}`
   const width = ctx.measureText(label).width + paddingX * 2
   const x = right - width
   const theme = typeTheme(label)
 
-  roundRect(ctx, x, y, width, 44, 22)
+  roundRect(ctx, x, y, width, height, height / 2)
   ctx.fillStyle = theme.solid
   ctx.fill()
+  if (outline) {
+    ctx.lineWidth = 2
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'
+    ctx.stroke()
+  }
 
   ctx.fillStyle = theme.on
   ctx.textBaseline = 'middle'
   ctx.textAlign = 'left'
-  ctx.fillText(label, x + paddingX, y + 23)
-  return x - 12
+  ctx.fillText(label, x + paddingX, y + height / 2 + 1)
+  return x - gap
 }
 
 function drawStats(ctx: CanvasRenderingContext2D, pokemon: Pokemon, top: number) {
@@ -289,12 +305,6 @@ export async function renderCard(canvas: HTMLCanvasElement, input: CardInput): P
   ctx.fillStyle = '#ffffff'
   ctx.fillText(`No.${pokemon.id}`, 258, 148)
 
-  // type badges, right aligned
-  let badgeRight = CARD_WIDTH - 82
-  for (const t of [...pokemon.types].reverse()) {
-    badgeRight = drawTypeBadge(ctx, t, badgeRight, 92)
-  }
-
   // ---- artwork ----------------------------------------------------------
   const artBox = { x: 240, y: 196, w: 600, h: 460 }
   ctx.save()
@@ -322,11 +332,20 @@ export async function renderCard(canvas: HTMLCanvasElement, input: CardInput): P
   drawThumbnail(ctx, thumb, CARD_WIDTH - 260, 196, 178)
 
   // ---- names ------------------------------------------------------------
+  // Type pills sit on the name row, right-aligned, so the species type reads as
+  // part of the identity block instead of a small chip in the header.
+  ctx.textBaseline = 'middle'
+  let badgeRight = CARD_WIDTH - 84
+  for (const t of [...pokemon.types].reverse()) {
+    badgeRight = drawTypeBadge(ctx, t, badgeRight, 700, { height: 50, font: 28, paddingX: 24 })
+  }
+
   ctx.textAlign = 'left'
   ctx.textBaseline = 'alphabetic'
   ctx.font = `700 84px ${FONT_STACK}`
   ctx.fillStyle = '#ffffff'
-  ctx.fillText(pokemon.name, 84, 742)
+  // Keep the longest dataset name (5 CJK glyphs) clear of the pills.
+  ctx.fillText(fitText(ctx, pokemon.name, badgeRight - 12 - 84), 84, 742)
 
   ctx.font = `500 30px ${FONT_STACK}`
   ctx.fillStyle = 'rgba(255,255,255,0.72)'
@@ -400,6 +419,23 @@ export async function renderCardToBlob(input: CardInput): Promise<Blob> {
       else reject(new Error('生成图片失败。'))
     }, 'image/png')
   })
+}
+
+/**
+ * Renders the card as a `data:` URL.
+ *
+ * Mobile needs this over a `blob:` URL: iOS Safari and several Android builds
+ * refuse "save image" on blob-backed `<img>` sources, while a data URL is
+ * treated as an ordinary image and gets the native long-press save sheet.
+ */
+export async function renderCardToDataUrl(input: CardInput): Promise<string> {
+  const canvas = document.createElement('canvas')
+  await renderCard(canvas, input)
+  const url = canvas.toDataURL('image/png')
+  // Free the ~5.8 MB backing store right away; the data URL is self-contained.
+  canvas.width = 0
+  canvas.height = 0
+  return url
 }
 
 export async function downloadCard(input: CardInput): Promise<void> {

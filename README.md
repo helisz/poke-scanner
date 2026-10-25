@@ -29,6 +29,29 @@ npm run build          # type-check + production build
 npm run preview
 ```
 
+### Accessing from a phone on the same Wi-Fi
+
+`vite.config.ts` sets `server.host: true`, so the dev server binds `0.0.0.0`
+instead of `localhost` and prints a **Network** URL at startup:
+
+```
+➜  Local:   http://localhost:5173/
+➜  Network: http://192.168.x.x:5173/
+```
+
+Open the **Network** URL (with an explicit `http://` prefix) on the phone. To
+read it back at any time:
+
+```bash
+ipconfig getifaddr en0     # macOS Wi-Fi IPv4
+lsof -nP -iTCP:5173 -sTCP:LISTEN   # should show *:5173, not localhost / [::1]
+```
+
+If the listener shows `[::1]:5173` or `127.0.0.1:5173`, the server is
+localhost-only and no other device can connect — restart it so the config takes
+effect. `server.allowedHosts` is also relaxed so mDNS names such as
+`<hostname>.local` work, not just bare IPs.
+
 ## How matching works
 
 Asking a vision model to "pick the closest of 1025 names" hallucinates. The app
