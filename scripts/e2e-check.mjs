@@ -13,6 +13,28 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+/** Minimal 16-bit mono silence, so the cloud TTS route returns a real WAV. */
+function silentWav(samples = 800) {
+  const data = Buffer.alloc(samples * 2)
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0, 'ascii')
+  header.writeUInt32LE(36 + data.length, 4)
+  header.write('WAVE', 8, 'ascii')
+  header.write('fmt ', 12, 'ascii')
+  header.writeUInt32LE(16, 16)
+  header.writeUInt16LE(1, 20)
+  header.writeUInt16LE(1, 22)
+  header.writeUInt32LE(24000, 24)
+  header.writeUInt32LE(24000 * 2, 28)
+  header.writeUInt16LE(2, 32)
+  header.writeUInt16LE(16, 34)
+  header.write('data', 36, 'ascii')
+  header.writeUInt32LE(data.length, 40)
+  return Buffer.concat([header, data])
+}
+
+const SILENT_WAV = silentWav()
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = path.join(ROOT, 'artifacts')
 const PORT = 5199
@@ -70,17 +92,50 @@ const context = await browser.newContext({
 })
 const page = await context.newPage()
 
+// Headless Chromium has no audio device and no installed voices, so both
+// engines are stubbed to settle deterministically. Without this the announcement
+// promise could hang forever and the assertions below would never run.
+await page.addInitScript(() => {
+  HTMLMediaElement.prototype.play = function () {
+    setTimeout(() => this.dispatchEvent(new Event('ended')), 20)
+    return Promise.resolve()
+  }
+  if (window.speechSynthesis) {
+    window.speechSynthesis.speak = (utterance) => {
+      setTimeout(() => utterance.onend?.(new Event('end')), 20)
+    }
+    window.speechSynthesis.cancel = () => {}
+    window.speechSynthesis.getVoices = () => []
+  }
+})
+
 const consoleErrors = []
 page.on('console', (msg) => {
-  if (msg.type() === 'error') consoleErrors.push(msg.text())
+  if (msg.type() === 'error') {
+    // Keep the source URL so intentional failures below can be excluded by
+    // request, not by broadly ignoring every 404/401.
+    consoleErrors.push({ text: msg.text(), url: msg.location()?.url ?? '' })
+  }
 })
-page.on('pageerror', (err) => consoleErrors.push(`pageerror: ${err.message}`))
+page.on('pageerror', (err) => consoleErrors.push({ text: `pageerror: ${err.message}`, url: '' }))
 
 // ---- mock the user's proxy -------------------------------------------------
 let describeCalls = 0
 let rerankCalls = 0
+let ttsCalls = 0
+let lastTtsBody = null
 await page.route('**/mock-proxy/**', async (route) => {
   const body = route.request().postDataJSON()
+  const url = route.request().url()
+
+  // Must be checked before the describe branch: a TTS request has no
+  // "候选列表" marker and would otherwise be counted as a vision call.
+  if (/\/audio\/speech$/.test(url)) {
+    ttsCalls++
+    lastTtsBody = body
+    return route.fulfill({ status: 200, contentType: 'audio/wav', body: SILENT_WAV })
+  }
+
   const isRerank = JSON.stringify(body).includes('候选列表')
   if (isRerank) {
     rerankCalls++
@@ -122,6 +177,37 @@ try {
 
   const topName = await page.locator('button:has-text("相似度")').first().innerText()
   check('top candidate is Pikachu', topName.includes('皮卡丘'), topName.replace(/\s+/g, ' '))
+
+  // ---- voice announcement --------------------------------------------------
+  // The live region carries the exact sentence that gets spoken, so it is the
+  // reliable, audio-free way to assert the announcement.
+  const liveRegion = page.locator('[role="status"][aria-live="polite"]')
+  await page.waitForFunction(
+    () => /首选/.test(document.querySelector('[role="status"][aria-live="polite"]')?.textContent ?? ''),
+    { timeout: 15000 },
+  )
+  const announcement = (await liveRegion.textContent())?.trim() ?? ''
+  check('announcement names the preferred result', announcement.includes('首选皮卡丘'), announcement)
+  check('announcement names two alternates', /备选.+、.+。/.test(announcement), announcement)
+  check('announcement omits scores and percentages', !/\d+%|相似度/.test(announcement), announcement)
+
+  // The default engine is cloud, so the proxy must have received a TTS call
+  // carrying the same sentence and the configured voice. The request is issued
+  // asynchronously, so poll Node-side state rather than asserting immediately.
+  for (let i = 0; i < 50 && ttsCalls === 0; i++) await page.waitForTimeout(100)
+  check('cloud TTS endpoint was called once', ttsCalls === 1, `calls=${ttsCalls}`)
+  check(
+    'TTS request carries the announcement text',
+    typeof lastTtsBody?.input === 'string' && lastTtsBody.input.includes('首选皮卡丘'),
+    JSON.stringify(lastTtsBody)?.slice(0, 160),
+  )
+  check(
+    'TTS request uses the configured model and voice',
+    lastTtsBody?.model === 'tts-1' && lastTtsBody?.voice === 'alloy',
+    JSON.stringify({ model: lastTtsBody?.model, voice: lastTtsBody?.voice }),
+  )
+  const speakerButton = page.getByRole('button', { name: /播报结果/ })
+  check('replay button is offered on the results header', (await speakerButton.count()) === 1)
 
   const bodyText = await page.locator('body').innerText()
   check('rerank reason is displayed', bodyText.includes('黄毛长耳'))
@@ -255,8 +341,35 @@ try {
     JSON.stringify(sheet),
   )
   await page.screenshot({ path: path.join(OUT, '05-mobile-settings.png') })
-  await page.getByRole('dialog').getByRole('button', { name: '取消' }).click()
+
+  // ---- voice controls live in settings and survive a save/reopen -----------
+  const dialog = page.getByRole('dialog')
+  check('voice engine options are present', (await dialog.getByRole('button', { name: '云端语音' }).count()) === 1)
+  check('voice preview button is present', (await dialog.getByRole('button', { name: '试听' }).count()) === 1)
+  check('cloud voice fields are shown by default', (await dialog.getByLabel('语音模型').count()) === 1)
+
+  // Switching to the system voice must reveal the rate slider and hide the
+  // cloud-only fields, then persist through save.
+  await dialog.getByRole('button', { name: '系统语音' }).click()
+  check('system voice reveals the rate slider', (await dialog.getByLabel(/语速/).count()) === 1)
+  check('system voice hides cloud fields', (await dialog.getByLabel('语音模型').count()) === 0)
+
+  // Restore the original choice so the "cancelled edits are discarded" check
+  // below compares against the pre-existing saved value, not the draft.
+  await dialog.getByRole('button', { name: '云端语音' }).click()
+  check('switching back restores the cloud fields', (await dialog.getByLabel('语音模型').count()) === 1)
+  await dialog.getByRole('button', { name: '取消' }).click()
   await page.getByRole('dialog').waitFor({ state: 'detached', timeout: 5000 })
+
+  const persisted = await page.evaluate(() => {
+    const raw = localStorage.getItem('poke-scanner.ai-config')
+    return raw ? JSON.parse(raw).voice : null
+  })
+  check(
+    'cancelled edits do not mutate the saved voice config',
+    persisted?.engine === 'cloud',
+    JSON.stringify(persisted),
+  )
 
   // ---- type pills are drawn into the card ----------------------------------
   // Text inside a canvas cannot be queried, so probe the pixel block where the
@@ -307,6 +420,53 @@ try {
   check('downloaded file is a valid PNG', isPng, `header=${buf.toString('hex', 0, 8)}`)
   check('downloaded PNG is non-trivial in size', buf.length > 30000, `${(buf.length / 1024).toFixed(0)} KB`)
 
+  // ---- cloud TTS unavailable -> browser fallback ----------------------------
+  // Many proxies whitelist only /chat/completions. The announcement must still
+  // be heard, and the degradation must be visible rather than silent.
+  await page.route('**/audio/speech', (route) =>
+    route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"not found"}' }),
+  )
+  await page.getByRole('button', { name: /播报结果/ }).click()
+  const fallbackText = await page
+    .getByText(/语音播报降级/)
+    .first()
+    .textContent({ timeout: 15000 })
+    .catch(() => '')
+  check(
+    'TTS 404 falls back to the system voice and says so',
+    /语音播报降级/.test(fallbackText ?? '') && /404/.test(fallbackText ?? ''),
+    (fallbackText ?? '').slice(0, 120),
+  )
+  await page.unroute('**/audio/speech')
+
+  // ---- transient 503: retried once, then falls back with the real reason ----
+  // A 503 is a gateway problem, so the client retries before giving up; the
+  // server's own explanation must reach the user instead of a bare status code.
+  let gatewayAttempts = 0
+  await page.route('**/audio/speech', (route) => {
+    gatewayAttempts++
+    return route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: { message: 'upstream tts pool exhausted' } }),
+    })
+  })
+  await page.getByRole('button', { name: /播报结果/ }).click()
+  const gatewayText = await page
+    .getByText(/语音播报降级/)
+    .first()
+    .textContent({ timeout: 20000 })
+    .catch(() => '')
+  check('503 is retried once before falling back', gatewayAttempts === 2, `attempts=${gatewayAttempts}`)
+  check(
+    '503 message explains the status and relays the server reason',
+    /503/.test(gatewayText ?? '') &&
+      /暂时不可用/.test(gatewayText ?? '') &&
+      /upstream tts pool exhausted/.test(gatewayText ?? ''),
+    (gatewayText ?? '').slice(0, 200),
+  )
+  await page.unroute('**/audio/speech')
+
   // ---- error handling: bad endpoint ----------------------------------------
   await page.unroute('**/mock-proxy/**')
   await page.route('**/mock-proxy/**', (route) =>
@@ -319,9 +479,19 @@ try {
 
   await page.screenshot({ path: path.join(OUT, '03-error.png'), fullPage: true })
 
-  // The 401 above is intentional; the browser logs it as a network error.
-  const unexpected = consoleErrors.filter((e) => !/401|Unauthorized/.test(e))
-  check('no uncaught console errors', unexpected.length === 0, unexpected.slice(0, 3).join(' | '))
+  // The failures injected above are deliberate and the browser logs them as
+  // network errors: the 401 from the bad-key probe, plus the 404 and 503 from
+  // the two TTS degradation probes. Anything else is a genuine regression.
+  const unexpected = consoleErrors.filter((entry) => {
+    if (/401|Unauthorized/.test(entry.text)) return false
+    if (/(404|503)/.test(entry.text) && /\/audio\/speech/.test(entry.url)) return false
+    return true
+  })
+  check(
+    'no uncaught console errors',
+    unexpected.length === 0,
+    unexpected.slice(0, 3).map((e) => `${e.text} @ ${e.url}`).join(' | '),
+  )
 } catch (err) {
   failures.push('exception')
   console.log(`✗ exception: ${err.message}`)

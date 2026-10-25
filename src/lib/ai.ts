@@ -15,14 +15,40 @@ import type { Candidate, SubjectTraits } from '@/lib/types'
 
 export type ProviderKind = 'openai' | 'gemini'
 
+/** How the scan result gets read aloud. */
+export type VoiceEngine = 'off' | 'browser' | 'cloud'
+
+export interface VoiceConfig {
+  /** `cloud` reuses this config's proxy, `browser` uses the platform voice. */
+  engine: VoiceEngine
+  /** Cloud TTS model — OpenAI uses `tts-1`, Gemini uses e.g. `gemini-2.5-flash-preview-tts`. */
+  model: string
+  /** Provider voice name (`alloy`, `Kore`, …). Empty falls back to the provider default. */
+  voice: string
+  /** Browser-only speaking rate, 0.5–2. */
+  rate: number
+}
+
 export interface AiConfig {
   baseUrl: string
   apiKey: string
   model: string
   provider: ProviderKind | 'auto'
+  voice: VoiceConfig
 }
 
 const STORAGE_KEY = 'poke-scanner.ai-config'
+
+const VOICE_ENGINES: VoiceEngine[] = ['off', 'browser', 'cloud']
+
+function normalizeEngine(value: unknown): VoiceEngine | undefined {
+  return VOICE_ENGINES.includes(value as VoiceEngine) ? (value as VoiceEngine) : undefined
+}
+
+function clampRate(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  return Math.min(2, Math.max(0.5, value))
+}
 
 export function defaultConfig(): AiConfig {
   const env = import.meta.env
@@ -31,6 +57,12 @@ export function defaultConfig(): AiConfig {
     apiKey: (env.VITE_AI_API_KEY as string) || '',
     model: (env.VITE_AI_MODEL as string) || 'gpt-4o-mini',
     provider: ((env.VITE_AI_PROVIDER as string) || 'auto') as AiConfig['provider'],
+    voice: {
+      engine: normalizeEngine(env.VITE_TTS_ENGINE) ?? 'cloud',
+      model: (env.VITE_TTS_MODEL as string) || 'tts-1',
+      voice: (env.VITE_TTS_VOICE as string) || 'alloy',
+      rate: clampRate(Number(env.VITE_TTS_RATE)) ?? 1,
+    },
   }
 }
 
@@ -45,11 +77,20 @@ export function loadConfig(): AiConfig {
     if (raw) {
       const parsed = JSON.parse(raw) as Partial<AiConfig>
       const base = defaultConfig()
+      const savedVoice = (parsed.voice ?? {}) as Partial<VoiceConfig>
       return {
         baseUrl: parsed.baseUrl || base.baseUrl,
         apiKey: parsed.apiKey || base.apiKey,
         model: parsed.model || base.model,
         provider: (parsed.provider as AiConfig['provider']) || base.provider,
+        // Older stored configs have no `voice` key at all; fall back per field
+        // rather than dropping the whole record.
+        voice: {
+          engine: normalizeEngine(savedVoice.engine) ?? base.voice.engine,
+          model: savedVoice.model || base.voice.model,
+          voice: savedVoice.voice || base.voice.voice,
+          rate: clampRate(savedVoice.rate) ?? base.voice.rate,
+        },
       }
     }
   } catch {

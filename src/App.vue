@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { CircleAlert, RotateCcw, Settings2, Sparkles, RefreshCw, Trash2, CircleHelp, ChevronDown } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { CircleAlert, RotateCcw, Settings2, Sparkles, RefreshCw, Trash2, CircleHelp, ChevronDown, Volume2, Loader2, VolumeX } from 'lucide-vue-next'
 import { POKEMON_COUNT } from '@/data'
 import { useScanner } from '@/composables/useScanner'
 import { useSettings } from '@/composables/useSettings'
+import { useAnnouncer } from '@/composables/useAnnouncer'
+import { unlockBrowserSpeech } from '@/lib/tts'
 import { describeTraits } from '@/lib/matcher'
 import UploadZone from '@/components/UploadZone.vue'
 import CandidateCard from '@/components/CandidateCard.vue'
@@ -28,9 +30,13 @@ const {
   busy, hasResult, uncertain, stageLabel,
 } = scanner
 
+// Voice is a side effect of the pipeline finishing, never a part of it.
+const announcer = useAnnouncer({ stage, candidates, uncertain, config })
+
 const detectedTags = computed(() => (traits.value ? describeTraits(traits.value) : []))
 const topThree = computed(() => candidates.value.slice(0, 3))
 const moreCandidates = computed(() => candidates.value.slice(3, 12))
+const voiceEnabled = computed(() => config.value.voice.engine !== 'off')
 
 async function onFile(file: File) {
   try {
@@ -49,6 +55,10 @@ async function startScan() {
     settingsOpen.value = true
     return
   }
+  // Must happen synchronously inside this click: iOS/Safari refuse speech that
+  // is not "unlocked" by a user gesture, and the result arrives seconds later.
+  if (voiceEnabled.value) unlockBrowserSpeech()
+
   await scanner.run(config.value, hint.value.trim() || undefined)
   if (stage.value === 'error' && error.value) {
     toast.error(error.value.message)
@@ -56,9 +66,12 @@ async function startScan() {
 }
 
 function restart() {
+  announcer.cancel()
   scanner.reset()
   hint.value = ''
 }
+
+onBeforeUnmount(() => announcer.cancel())
 
 function pick(candidate: Parameters<typeof scanner.select>[0]) {
   scanner.select(candidate)
@@ -213,9 +226,25 @@ function pick(candidate: Parameters<typeof scanner.select>[0]) {
                     <h3 class="truncate text-[15px] font-semibold sm:text-base">最相似的候选</h3>
                     <Badge v-if="reranked" class="shrink-0">大模型已精排</Badge>
                   </div>
-                  <p class="font-mono text-[11px] text-muted-foreground">
-                    {{ (confidence * 100).toFixed(0) }}% 置信度 · {{ elapsedMs }}ms
-                  </p>
+                  <div class="flex shrink-0 items-center gap-2">
+                    <p class="font-mono text-[11px] text-muted-foreground">
+                      {{ (confidence * 100).toFixed(0) }}% 置信度 · {{ elapsedMs }}ms
+                    </p>
+                    <!-- Replays the announcement; hidden when voice is switched off. -->
+                    <Button
+                      v-if="voiceEnabled && announcer.text.value"
+                      variant="ghost"
+                      size="icon"
+                      class="size-7"
+                      :title="announcer.speaking.value ? '正在播报' : '重新播报'"
+                      :aria-label="announcer.speaking.value ? '正在播报结果' : '重新播报结果'"
+                      :disabled="announcer.speaking.value"
+                      @click="announcer.replay"
+                    >
+                      <Loader2 v-if="announcer.speaking.value" class="size-3.5 animate-spin" />
+                      <Volume2 v-else class="size-3.5" />
+                    </Button>
+                  </div>
                 </div>
 
                 <div
@@ -229,6 +258,13 @@ function pick(candidate: Parameters<typeof scanner.select>[0]) {
                 </div>
 
                 <p v-if="rerankWarning" class="text-[11px] text-muted-foreground">{{ rerankWarning }}</p>
+
+                <!-- Cloud TTS is best-effort: say so when the proxy has no audio
+                     route and the platform voice covered for it. -->
+                <p v-if="announcer.warning.value" class="flex items-start gap-1.5 text-[11px] text-muted-foreground">
+                  <VolumeX class="mt-px size-3 shrink-0" />
+                  <span class="min-w-0 break-words">语音播报降级：{{ announcer.warning.value }}</span>
+                </p>
 
                 <div class="space-y-2.5">
                   <CandidateCard
@@ -309,6 +345,10 @@ function pick(candidate: Parameters<typeof scanner.select>[0]) {
 
     <SettingsDialog v-model:open="settingsOpen" />
     <Toaster />
+
+    <!-- Voice is optional; the outcome must still reach assistive tech. This
+         region carries the same sentence the speaker would read. -->
+    <p class="sr-only" role="status" aria-live="polite">{{ announcer.text.value }}</p>
   </div>
 </template>
 
